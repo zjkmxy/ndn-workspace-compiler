@@ -1,10 +1,12 @@
-import { Endpoint } from 'npm:@ndn/endpoint'
-import { WsTransport } from "npm:@ndn/ws-transport"
-import { encodeBase64 } from "std/encoding/base64.ts"
 import * as path from "std/path/mod.ts"
+import { Endpoint } from 'npm:@ndn/endpoint'
+import { UnixTransport } from "npm:@ndn/node-transport"
 import { FwTracer } from "npm:@ndn/fw"
-import { Interest } from "npm:@ndn/packet"
-import { fchQuery } from "npm:@ndn/autoconfig"
+import { Data, Interest, Name, digestSigning } from "npm:@ndn/packet"
+import { Decoder } from "npm:@ndn/tlv"
+import * as segobj from "npm:@ndn/segmented-object"
+import { enableNfdPrefixReg } from "npm:@ndn/nfdmgmt"
+import { FileChunkSource } from './file-chunk-source.ts'
 
 const texCommands = [
   { cmd: 'pdflatex', args: ['-shell-escape', '-interaction=nonstopmode', 'main.tex'] },
@@ -12,6 +14,7 @@ const texCommands = [
   { cmd: 'pdflatex', args: ['-shell-escape', '-interaction=nonstopmode', 'main.tex'] },
   { cmd: 'pdflatex', args: ['-shell-escape', '-interaction=nonstopmode', 'main.tex'] },
 ]
+let servers: Array<segobj.Server> = []
 
 const runOn = async (reqId: string, zipContent: Uint8Array) => {
   const dirPath = path.join(Deno.cwd(), 'uploaded', reqId)
@@ -44,7 +47,7 @@ const runOn = async (reqId: string, zipContent: Uint8Array) => {
     cmdOutput = await execCmd.output()
   }
 
-  if(cmdOutput.code !== 0) {
+  if (cmdOutput.code !== 0) {
     return {
       'id': reqId,
       'status': 'error',
@@ -70,33 +73,71 @@ const runOn = async (reqId: string, zipContent: Uint8Array) => {
 }
 
 const requestHandler = async (interest: Interest) => {
-}
+  const nameWire = interest.appParameters
+  if (!nameWire) {
+    return
+  }
+  const name = Name.decodeFrom(new Decoder(nameWire))
+  // Fetch for input
 
-const responseHandler = async (interest: Interest) => {
+  console.log(`Go fetching ${name.toString()}`)
+  const zipContent = await segobj.fetch(name, {
+    modifyInterest: { mustBeFresh: true },
+    lifetimeAfterRto: 2000,
+  })
+
+  // Execute
+  const reqId = crypto.randomUUID()
+  const result = await runOn(reqId, zipContent)
+  const retText = JSON.stringify(result)
+  const retWire = new TextEncoder().encode(retText)
+
+  // TODO: THIS DOES NOT SCALE. There must be one producer handling all results, not one for each.
+  // TODO: schedule delete them after some time
+  // TODO: Does NDNts allows to give a signer?
+
+  const server = segobj.serve(
+    `/ndn/workspace-compiler/result/${reqId}`,
+    new FileChunkSource(`uploaded/${reqId}.pdf`),
+    { announcement: false }
+  )
+  const len = servers.push(server)
+  if (len > 10) {
+    servers[0].close()
+    servers = servers.slice(1)
+  }
+
+  return new Data(interest.name, Data.FreshnessPeriod(5000), retWire)
 }
 
 // Learn more at https://deno.land/manual/examples/module_metadata#concepts
 if (import.meta.main) {
-  // FwTracer.enable()
+  FwTracer.enable()
 
-  // const fchRes = await fchQuery({
-  //   transport: 'wss',
-  //   position: [
-  //     -118,
-  //     34,
-  //   ]
-  // })
-  // console.log(fchRes.routers[0])
+  const endpoint = new Endpoint()
+  const nfdFace = await UnixTransport.createFace({}, '/run/nfd.sock')
+  enableNfdPrefixReg(nfdFace, {
+    signer: digestSigning,
+  })
 
-  // const endpoint = new Endpoint()
-  // const nfdWsFace = await WsTransport.createFace({ l3: { local: false } }, fchRes.routers[0].connect)
+  const prefixRegister = endpoint.produce('/ndn/workspace-compiler', () => new Promise(() => undefined), {
+    routeCapture: false,
+  })
+  const reqHandler = endpoint.produce('/ndn/workspace-compiler/request', requestHandler, {
+    dataSigner: digestSigning,
+    announcement: false,
+  })
+  // const resHandler = endpoint.produce('/ndn/workspace-compiler/result', resultHandler, {})
 
-  // const data = await endpoint.consume(new Interest('/yoursunny/_/ley/ping/4', Interest.CanBePrefix))
-
-  // const nameStr = (await data.computeFullName()).toString()
-  // const result = encodeBase64(data.content)
-  // console.log(nameStr)
-  // console.log(result)
-
-  // nfdWsFace.close()
+  Deno.addSignalListener("SIGINT", () => {
+    console.log("Stopped by Ctrl+C")
+    // resHandler.close()
+    for (const server of servers) {
+      server.close()
+    }
+    reqHandler.close()
+    prefixRegister.close()
+    nfdFace.close()
+    Deno.exit()
+  })
 }

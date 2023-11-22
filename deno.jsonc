@@ -1,13 +1,12 @@
 {
-  "imports": {
-    // "@ndn/": "https://ndnts-nightly.ndn.today/"
-    // "@ndn/": "npm:@ndn/"
-    "std/": "https://deno.land/std@0.207.0/"
-  },
+  // BYNOM does not work with import-map
+  // "imports": {
+  //   "std/": "https://deno.land/std@0.207.0/"
+  // },
   "tasks": {
     "dev": "deno run --watch main.ts",
     "main": "deno run --allow-net --allow-run --allow-read --allow-write --unstable main.ts",
     "consumer": "deno run --allow-net --allow-read --allow-write --unstable consumer.ts"
   },
-  "lock": "./deno.lock"
+  "unstable": ["byonm", "net", "fs"]
 }

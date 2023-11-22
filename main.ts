@@ -1,12 +1,11 @@
-import * as path from "std/path/mod.ts"
-import { Endpoint } from 'npm:@ndn/endpoint'
-import { UnixTransport } from "npm:@ndn/node-transport"
-import { FwTracer } from "npm:@ndn/fw"
-import { Data, Interest, Name, digestSigning } from "npm:@ndn/packet"
-import { Decoder } from "npm:@ndn/tlv"
-import * as segobj from "npm:@ndn/segmented-object"
-import { enableNfdPrefixReg } from "npm:@ndn/nfdmgmt"
-import { FileChunkSource } from './file-chunk-source.ts'
+import { path } from "./dep.ts"
+import { Endpoint } from '@ndn/endpoint'
+import { UnixTransport } from "@ndn/node-transport"
+import { FwTracer } from "@ndn/fw"
+import { Data, Interest, Name, digestSigning } from "@ndn/packet"
+import { Decoder } from "@ndn/tlv"
+import * as segobj from "@ndn/segmented-object"
+import { enableNfdPrefixReg } from "@ndn/nfdmgmt"
 
 const texCommands = [
   { cmd: 'pdflatex', args: ['-shell-escape', '-interaction=nonstopmode', 'main.tex'] },
@@ -96,9 +95,11 @@ const requestHandler = async (interest: Interest) => {
   // TODO: schedule delete them after some time
   // TODO: Does NDNts allows to give a signer?
 
+  const fileContent = await Deno.readFile(`uploaded/${reqId}.pdf`)
+  const chunkSource = new segobj.BufferChunkSource(fileContent)
   const server = segobj.serve(
-    `/ndn/workspace-compiler/result/${reqId}`,
-    new FileChunkSource(`uploaded/${reqId}.pdf`),
+    new Name(`/ndn/workspace-compiler/result/${reqId}`),
+    chunkSource,
     { announcement: false }
   )
   const len = servers.push(server)

@@ -1,11 +1,10 @@
-import { Endpoint } from 'npm:@ndn/endpoint'
-import { UnixTransport } from "npm:@ndn/node-transport"
-import { FwTracer } from "npm:@ndn/fw"
-import { fetch, serve } from "npm:@ndn/segmented-object"
-import { Interest, Name, digestSigning } from "npm:@ndn/packet"
-import { enableNfdPrefixReg } from "npm:@ndn/nfdmgmt"
-import { FileChunkSource } from './file-chunk-source.ts'
-import { Encoder } from "npm:@ndn/tlv";
+import { Endpoint } from '@ndn/endpoint'
+import { UnixTransport } from "@ndn/node-transport"
+import { FwTracer } from "@ndn/fw"
+import { fetch, serve, BufferChunkSource } from "@ndn/segmented-object"
+import { Interest, Name, digestSigning } from "@ndn/packet"
+import { enableNfdPrefixReg } from "@ndn/nfdmgmt"
+import { Encoder } from "@ndn/tlv"
 
 if (import.meta.main) {
   FwTracer.enable()
@@ -21,7 +20,9 @@ if (import.meta.main) {
   const reqNameEncoder = new Encoder()
   reqName.encodeTo(reqNameEncoder)
 
-  const zipServer = serve(reqName, new FileChunkSource(filePath))
+  const fileContent = await Deno.readFile(filePath)
+  const chunkSource = new BufferChunkSource(fileContent)
+  const zipServer = serve(reqName, chunkSource)
 
   const interest = new Interest(
     '/ndn/workspace-compiler/request',
@@ -43,7 +44,7 @@ if (import.meta.main) {
     const reqId = result.id
     const pdfContent = await fetch(`/ndn/workspace-compiler/result/${reqId}`)
 
-    Deno.writeFile('./result.pdf', pdfContent)
+    Deno.writeFile('./temp/result.pdf', pdfContent)
   }
 
   zipServer.close()
